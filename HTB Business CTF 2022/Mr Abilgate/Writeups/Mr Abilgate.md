@@ -1,13 +1,17 @@
+# Mr Abilgate
+
 **_"Mr. Abilgate, the CFO of a Fortune 500 company, has reportedly been the victim of a recent spree of ransomware attacks. The behaviour of the malware seems consistent with our current APT target's tactics, but the ransom note makes us think it's a targeted attack. We suspect bad faith from corporate espionage gone wrong. Could you investigate?"_**
 
 Mr Abilgate was a medium difficulty reversing challenge from the Business CTF organized by HTB in 2022. Initially, we are provided with two files, a Windows PE32 and what seems to be an Excel spreadsheet that has been encrypted by a ransomware. Let's start by analysing the behaviour of the included "KeyStorage" executable by monitoring its activity with [Procmon](https://docs.microsoft.com/en-us/sysinternals/downloads/procmon).
 
 Upon running the executable, one event in particular caught my attention.
 ![7931d7917ceac8f183318f36affe1c42.png](../_resources/7931d7917ceac8f183318f36affe1c42.png)
+
 As we can see, the program is trying to access `C:\Users\Administrator\Desktop\ShipSalesThisIsSuperImportantPleaseDontDelete` with result `PATH NOT FOUND`. This seems to be the path where the ransomware tries to encrypt files from so let's create a test file inside it, adjust the path permissions properly and run the ransomware again. 
 ![34a34c154b7be95344475a5c5e229fb2.png](../_resources/34a34c154b7be95344475a5c5e229fb2.png)
 
 Checking the contents of the newly generated `test.txt.bhtbr` file with xxd reveals that the file is indeed encrypted. We got the ransomware working as intended!
+
 ![7cfc1c178c6e64e68f98b3044bc5517f.png](../_resources/7cfc1c178c6e64e68f98b3044bc5517f.png)
 
 The first thing I tried from this point was to load the executable into Ghidra praying that no obfuscation was being used, but I quickly gave up after not getting any useful information for a while and opted for a dynamic analysis approach instead.
@@ -23,7 +27,9 @@ Aha! Two crypto-related modules were loaded, `CRYPT32.dll` and `bcrypt.dll`.
 ![6d4ac1db13e6459a19e2af086614e8c9.png](../_resources/6d4ac1db13e6459a19e2af086614e8c9.png)
 
 Then, I used FRIDA to try and trace calls to functions with the string "crypt" in their name. As a side note, remember to create a new test file inside the aforementioned path for each run so the ransomware has new files to encrypt.
+
 `frida-trace -f .\KeyStorage.exe -i "*crypt*/i"`
+
 ![14a7db45016d782d5b9bbf924c2085d1.png](../_resources/14a7db45016d782d5b9bbf924c2085d1.png)
 
 Hmm so BCrypt is indeed being used to encrypt the files but we don't know yet which algorithms are being applied. But before getting into that, there are some things that can be deduced from this trace. Three main sections stand out to me, a first one where some data is hashed, a second one where an encryption key is generated and lastly, a third one where the file is encrypted.
@@ -46,14 +52,14 @@ With this, we now know that one provider is dedicated to the initial hashing wit
 
 Reading the documentation also taught me that the function `BCryptGenerateSymmetricKey` derives a new key from a supplied one and that `BCryptFinishHash` is used to return the generated hash. One could think that the hashed bytes are being used to generate a key which then will be used to encrypt the files. This can also be tested by checking the arguments for some of the BCrypt functions with FRIDA hooks.
 
-![a4f3043007e6b43b8ff0a4c2338994b3.png](../_resources/a4f3043007e6b43b8ff0a4c2338994b3.png)
-*`BCryptFinishHash` Return value. Since the output is constant between runs we can skip the hashing part for our decryption tool.*
+![a4f3043007e6b43b8ff0a4c2338994b3.png](../_resources/a4f3043007e6b43b8ff0a4c2338994b3.png)<br>
+*`BCryptFinishHash` Return value. Since the output is constant between runs we can skip the hashing part for our decryption tool.*<br><br>
 
-![0e024a943bfba5d761d435c2b33f4fd5.png](../_resources/0e024a943bfba5d761d435c2b33f4fd5.png)
-*`BCryptGenerateSymmetricKey` uses the hashed bytes as its input key!*
+![0e024a943bfba5d761d435c2b33f4fd5.png](../_resources/0e024a943bfba5d761d435c2b33f4fd5.png)<br>
+*`BCryptGenerateSymmetricKey` uses the hashed bytes as its input key!*<br><br>
 
-![62ca9d45f726cf92d735285fe8b54ce5.png](../_resources/62ca9d45f726cf92d735285fe8b54ce5.png)
-*Trace of `BCryptGenerateSymmetricKey` and `BCryptEncrypt`.*
+![62ca9d45f726cf92d735285fe8b54ce5.png](../_resources/62ca9d45f726cf92d735285fe8b54ce5.png)<br>
+*Trace of `BCryptGenerateSymmetricKey` and `BCryptEncrypt`.*<br><br>
 
 Now we know everything we need to create a program that decrypts the provided spreadsheet. Let's recap:
 - Some constant bytes are hashed with SHA256 at the beginning.
@@ -242,7 +248,8 @@ int main(int argc, char** argv){
 ```
 
 Running it against the encrypted spreadsheet leaves us with the decrypted file where the flag is located!
-**FLAG**: `_HTB{b1g_br41ns_b1gg3r_p0ck3ts_sm4ll3r_p4y0uts}`<br>
+**FLAG**: `_HTB{b1g_br41ns_b1gg3r_p0ck3ts_sm4ll3r_p4y0uts}`
+
 ![76ff0dc377504a7f853010ce1744c88a.png](../_resources/76ff0dc377504a7f853010ce1744c88a.png)
 ![c72a046f64be727e68ace06a0df08658.png](../_resources/c72a046f64be727e68ace06a0df08658.png)
 ![5e4a998d025f086c23775704f19d6a20.png](../_resources/5e4a998d025f086c23775704f19d6a20.png)
